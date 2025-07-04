@@ -36,9 +36,6 @@ RUN pnpm install --frozen-lockfile --prod
 # Copy built application
 COPY --from=builder /app/dist ./dist
 
-# Copy necessary files
-COPY ecosystem.config.js ./
-
 # Set environment variables
 ENV NODE_ENV=production
 ENV PORT=3000
@@ -46,5 +43,5 @@ ENV PORT=3000
 # Expose the port your app listens on
 EXPOSE 3000
 
-# Use PM2 to run the application
-CMD ["pnpm", "start"] 
+# Start the application
+CMD ["node", "dist/index.js"] 
