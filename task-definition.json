@@ -4,12 +4,12 @@
     "requiresCompatibilities": ["FARGATE"],
     "cpu": "256",
     "memory": "512",
-    "executionRoleArn": "arn:aws:iam::YOUR_ACCOUNT_ID:role/ecsTaskExecutionRole",
-    "taskRoleArn": "arn:aws:iam::YOUR_ACCOUNT_ID:role/ecsTaskRole",
+    "executionRoleArn": "arn:aws:iam::151565052202:role/ecsTaskExecutionRole",
+    "taskRoleArn": "arn:aws:iam::151565052202:role/ecsTaskRole",
     "containerDefinitions": [
         {
             "name": "utopia-backend",
-            "image": "YOUR_ACCOUNT_ID.dkr.ecr.us-east-1.amazonaws.com/utopia-backend:latest",
+            "image": "151565052202.dkr.ecr.us-east-1.amazonaws.com/utopia-backend:latest",
             "portMappings": [
                 {
                     "containerPort": 3000,
@@ -29,7 +29,7 @@
             "secrets": [
                 {
                     "name": "OPENAI_API_KEY",
-                    "valueFrom": "arn:aws:ssm:us-east-1:YOUR_ACCOUNT_ID:parameter/utopia/openai-api-key"
+                    "valueFrom": "arn:aws:ssm:us-east-1:151565052202:parameter/utopia/openai-api-key"
                 }
             ],
             "logConfiguration": {
@@ -39,7 +39,8 @@
                     "awslogs-region": "us-east-1",
                     "awslogs-stream-prefix": "ecs"
                 }
-            }
+            },
+            "essential": true
         }
     ]
 } 
