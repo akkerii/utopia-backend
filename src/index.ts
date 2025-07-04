@@ -7,8 +7,7 @@ import { sessionService } from "./services/sessionService";
 // Load environment variables
 dotenv.config();
 
-
-
+const app = express();
 const PORT = parseInt(process.env.PORT || '3000', 10);
 const HOST = process.env.HOST || '0.0.0.0'; // Listen on all network interfaces
 
@@ -25,11 +24,6 @@ const corsOptions = {
   credentials: true,
   optionsSuccessStatus: 200
 };
-
-
-
-
-
 
 // Middleware
 app.use(cors(corsOptions));
