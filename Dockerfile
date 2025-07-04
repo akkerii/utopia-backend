@@ -4,7 +4,7 @@ FROM node:20-alpine AS deps
 
 # Install pnpm globally
 RUN corepack enable \
-    && corepack prepare pnpm@10.12.1 --activate
+    && corepack prepare pnpm@10.12.4 --activate
 
 WORKDIR /app
 
@@ -24,7 +24,7 @@ FROM node:20-alpine AS runner
 
 # Re-enable pnpm in the runtime image
 RUN corepack enable \
-    && corepack prepare pnpm@10.12.1 --activate
+    && corepack prepare pnpm@10.12.4 --activate
 
 WORKDIR /app
 
