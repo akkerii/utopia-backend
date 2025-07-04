@@ -1,3 +1,39 @@
+# Environment variables
 .env
-docker-compose.yml # ou mieux, gardez un fichier sans clé
-ecosystem.config.js # idem, conservez un modèle sans secret
+.env.local
+.env.*.local
+
+# Secrets
+*.pem
+key.json
+credentials.json
+
+# Dependencies
+node_modules/
+dist/
+build/
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Editor directories and files
+.idea/
+.vscode/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
