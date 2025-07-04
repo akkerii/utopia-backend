@@ -12,6 +12,8 @@ const PORT = parseInt(process.env.PORT || '3000', 10);
 const HOST = process.env.HOST || '0.0.0.0'; // Listen on all network interfaces
 
 // CORS configuration
+
+
 const corsOptions = {
   origin: [
     'https://acc2-41-225-32-168.ngrok-free.app',
