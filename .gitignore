@@ -1,0 +1,3 @@
+.env
+docker-compose.yml # ou mieux, gardez un fichier sans clé
+ecosystem.config.js # idem, conservez un modèle sans secret
