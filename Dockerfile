@@ -14,13 +14,9 @@ COPY pnpm-lock.yaml package.json ./
 # Install dependencies
 RUN pnpm install --frozen-lockfile
 
-# --- Build stage -----------------------------------------------------------
+# Build stage for TypeScript compilation
 FROM deps AS builder
-
-# Copy source files
 COPY . .
-
-# Build the application
 RUN pnpm build
 
 # --- Runtime stage ---------------------------------------------------------
@@ -30,25 +26,25 @@ FROM node:20-alpine AS runner
 RUN corepack enable \
     && corepack prepare pnpm@10.12.1 --activate
 
-# Create a non-root user
-RUN addgroup --system --gid 1001 nodejs \
-    && adduser --system --uid 1001 nextjs
-
 WORKDIR /app
 
-# Copy only the necessary files from previous stages
-COPY --from=deps --chown=nextjs:nodejs /app/node_modules ./node_modules
-COPY --from=builder --chown=nextjs:nodejs /app/dist ./dist
-COPY --chown=nextjs:nodejs package.json ./
+# Copy only production dependencies
+COPY --from=deps /app/package.json ./package.json
+COPY --from=deps /app/pnpm-lock.yaml ./pnpm-lock.yaml
+RUN pnpm install --frozen-lockfile --prod
 
-# Switch to non-root user
-USER nextjs
+# Copy built application
+COPY --from=builder /app/dist ./dist
+
+# Copy necessary files
+COPY ecosystem.config.js ./
+
+# Set environment variables
+ENV NODE_ENV=production
+ENV PORT=3000
 
 # Expose the port your app listens on
 EXPOSE 3000
 
-# Set production environment
-ENV NODE_ENV=production
-
-# Start the server
+# Use PM2 to run the application
 CMD ["pnpm", "start"] 
