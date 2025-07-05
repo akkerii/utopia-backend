@@ -15,8 +15,7 @@ const HOST = process.env.HOST || '0.0.0.0'; // Listen on all network interfaces
 // CORS configuration
 const corsOptions = {
   origin: [
-    'https://acc2-41-225-32-168.ngrok-free.app',
-    'https://5e80-3-82-158-36.ngrok-free.app',
+    'https://utopia-frontend-218476677732.us-central1.run.app',
     'http://localhost:3000',
     'http://localhost:3001'
   ],
