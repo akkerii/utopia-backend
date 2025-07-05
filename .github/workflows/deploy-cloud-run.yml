@@ -47,7 +47,28 @@ jobs:
 
     - name: Build and push image using Cloud Build
       run: |
-        gcloud builds submit --tag ${{ env.GAR_LOCATION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.SERVICE_NAME }}/${{ env.SERVICE_NAME }}:${{ github.sha }}
+        # Submit build asynchronously to avoid log streaming issues
+        BUILD_ID=$(gcloud builds submit --tag ${{ env.GAR_LOCATION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.SERVICE_NAME }}/${{ env.SERVICE_NAME }}:${{ github.sha }} --async --format="value(name)")
+        echo "Build ID: $BUILD_ID"
+        
+        # Wait for build to complete
+        echo "Waiting for build to complete..."
+        while true; do
+          STATUS=$(gcloud builds describe $BUILD_ID --format="value(status)")
+          echo "Build status: $STATUS"
+          
+          if [ "$STATUS" = "SUCCESS" ]; then
+            echo "✅ Build completed successfully"
+            break
+          elif [ "$STATUS" = "FAILURE" ] || [ "$STATUS" = "CANCELLED" ] || [ "$STATUS" = "TIMEOUT" ]; then
+            echo "❌ Build failed with status: $STATUS"
+            gcloud builds log $BUILD_ID
+            exit 1
+          else
+            echo "Build still in progress... waiting 30 seconds"
+            sleep 30
+          fi
+        done
 
     - name: Deploy to Cloud Run
       run: |
