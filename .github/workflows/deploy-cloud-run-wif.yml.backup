@@ -1,15 +1,15 @@
-name: Deploy to Cloud Run (Simple)
+name: Deploy to Cloud Run (Workload Identity Federation)
 
 on:
   push:
-    branches: [ "main" ]
-  workflow_dispatch:
+    branches: [ "main" ]  # Trigger on push to main branch
+  workflow_dispatch:      # Allow manual triggers
 
 env:
   PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
-  GAR_LOCATION: us-central1
-  SERVICE: utopia-backend
-  REGION: us-central1
+  GAR_LOCATION: us-central1              # Change this to your preferred region
+  SERVICE: utopia-backend                # Cloud Run service name
+  REGION: us-central1                    # Change this to your preferred region
 
 jobs:
   deploy:
@@ -17,17 +17,25 @@ jobs:
     runs-on: ubuntu-latest
     environment: production
 
+    permissions:
+      contents: read
+      id-token: write
+
     steps:
     - name: Checkout
       uses: actions/checkout@v4
 
     - name: Google Auth
-      uses: google-github-actions/auth@v2
+      id: auth
+      uses: 'google-github-actions/auth@v2'
       with:
-        credentials_json: '${{ secrets.GCP_SA_KEY }}'
+        workload_identity_provider: '${{ secrets.WIF_PROVIDER }}'
+        service_account: '${{ secrets.WIF_SERVICE_ACCOUNT }}'
 
     - name: Set up Cloud SDK
-      uses: google-github-actions/setup-gcloud@v2
+      uses: 'google-github-actions/setup-gcloud@v2'
+      with:
+        version: '>= 363.0.0'
 
     - name: Configure Docker to use gcloud as a credential helper
       run: |
@@ -59,6 +67,7 @@ jobs:
           --max-instances=10
           --concurrency=100
           --timeout=300
+          --service-account=${{ secrets.CLOUD_RUN_SERVICE_ACCOUNT }}
 
     - name: Show Output
       run: echo ${{ steps.deploy.outputs.url }} 
