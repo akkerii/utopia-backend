@@ -22,12 +22,15 @@ jobs:
       uses: actions/checkout@v4
 
     - name: Debug - Check if secret exists
+      env:
+        GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
       run: |
-        if [ -n "${{ secrets.GCP_SA_KEY }}" ]; then
-          echo "✅ GCP_SA_KEY secret found"
-        else
+        if [ -z "$GCP_SA_KEY" ]; then
           echo "❌ GCP_SA_KEY secret not found"
           exit 1
+        else
+          echo "✅ GCP_SA_KEY secret found"
+          echo "Secret length: ${#GCP_SA_KEY} characters"
         fi
 
     - name: Google Auth
