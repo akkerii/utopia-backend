@@ -38,10 +38,10 @@ COPY --from=builder /app/dist ./dist
 
 # Set environment variables
 ENV NODE_ENV=production
-ENV PORT=3000
+ENV PORT=8080
 
 # Expose the port your app listens on
-EXPOSE 3000
+EXPOSE 8080
 
 # Start the application
 CMD ["node", "dist/index.js"] 
