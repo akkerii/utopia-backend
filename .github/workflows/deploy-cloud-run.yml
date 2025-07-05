@@ -21,6 +21,15 @@ jobs:
     - name: Checkout
       uses: actions/checkout@v4
 
+    - name: Debug - Check if secret exists
+      run: |
+        if [ -n "${{ secrets.GCP_SA_KEY }}" ]; then
+          echo "✅ GCP_SA_KEY secret found"
+        else
+          echo "❌ GCP_SA_KEY secret not found"
+          exit 1
+        fi
+
     - name: Google Auth
       uses: google-github-actions/auth@v2
       with:
