@@ -119,8 +119,8 @@ class ChatService {
       // Validate module with normalization
       let validModule = session.currentModule;
       if (
-        orchestrationDecision.module === null ||
-        orchestrationDecision.module === "null"
+        !orchestrationDecision.module ||
+        orchestrationDecision.module === null
       ) {
         validModule = undefined;
       } else {

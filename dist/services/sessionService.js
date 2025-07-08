@@ -13,6 +13,7 @@ class SessionService {
             id: sessionId,
             mode,
             currentAgent: mode === types_1.Mode.ENTREPRENEUR ? types_1.AgentType.IDEA : types_1.AgentType.STRATEGY,
+            currentModule: types_1.ModuleType.IDEA_CONCEPT,
             contextBuckets: new Map(),
             conversationHistory: [],
             createdAt: new Date(),
