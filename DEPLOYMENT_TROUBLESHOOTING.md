@@ -5,37 +5,53 @@
 ### Problem
 
 ```
-ERROR: (gcloud.services.list) [github-actions-sa@dotted-banner-363222.iam.gserviceaccount.com] does not have permission to access projects instance [dotted-banner-363222]
+ERROR: (gcloud.services.enable) PERMISSION_DENIED: Permission denied to enable service [cloudbuild.googleapis.com]
 ```
 
 ### Root Cause
 
-The GitHub Actions service account lacks necessary permissions to:
+The GitHub Actions service account doesn't have sufficient permissions to enable APIs. This requires Owner or Editor role, which is too broad for a CI/CD service account.
 
-1. List and manage services
-2. Access project resources
-3. Manage Cloud Build and Cloud Run
+## 🔧 Solution
 
-## 🔧 Immediate Fix
+### 1. Manual API Enablement (Required Once)
 
-### 1. Add Required Service Management Roles
+As a project owner, enable required APIs manually:
 
-Run these commands in Cloud Shell or local gcloud CLI:
+1. **Visit Cloud Console**: https://console.cloud.google.com/apis/dashboard?project=dotted-banner-363222
+
+2. **Enable these APIs**:
+
+   ```bash
+   # Run these commands as project owner
+   gcloud auth login
+
+   gcloud config set project dotted-banner-363222
+
+   # Enable required APIs
+   gcloud services enable cloudbuild.googleapis.com
+   gcloud services enable run.googleapis.com
+   gcloud services enable artifactregistry.googleapis.com
+   gcloud services enable containerregistry.googleapis.com
+   gcloud services enable cloudresourcemanager.googleapis.com
+   ```
+
+   Or enable via Console:
+   - [Enable Cloud Build API](https://console.cloud.google.com/apis/library/cloudbuild.googleapis.com)
+   - [Enable Cloud Run API](https://console.cloud.google.com/apis/library/run.googleapis.com)
+   - [Enable Artifact Registry API](https://console.cloud.google.com/apis/library/artifactregistry.googleapis.com)
+   - [Enable Container Registry API](https://console.cloud.google.com/apis/library/containerregistry.googleapis.com)
+   - [Enable Resource Manager API](https://console.cloud.google.com/apis/library/cloudresourcemanager.googleapis.com)
+
+### 2. Service Account Permissions
+
+After APIs are enabled, grant these roles to the service account:
 
 ```bash
-# Service Management permissions
+# Basic service usage viewer (no API enablement)
 gcloud projects add-iam-policy-binding dotted-banner-363222 \
   --member="serviceAccount:github-actions-sa@dotted-banner-363222.iam.gserviceaccount.com" \
   --role="roles/serviceusage.serviceUsageViewer"
-
-gcloud projects add-iam-policy-binding dotted-banner-363222 \
-  --member="serviceAccount:github-actions-sa@dotted-banner-363222.iam.gserviceaccount.com" \
-  --role="roles/serviceusage.serviceUsageAdmin"
-
-# Project level access
-gcloud projects add-iam-policy-binding dotted-banner-363222 \
-  --member="serviceAccount:github-actions-sa@dotted-banner-363222.iam.gserviceaccount.com" \
-  --role="roles/viewer"
 
 # Cloud Build permissions
 gcloud projects add-iam-policy-binding dotted-banner-363222 \
@@ -47,93 +63,81 @@ gcloud projects add-iam-policy-binding dotted-banner-363222 \
   --member="serviceAccount:github-actions-sa@dotted-banner-363222.iam.gserviceaccount.com" \
   --role="roles/run.admin"
 
-# Service Account User role (needed to act as service account)
+# Service Account User role
 gcloud projects add-iam-policy-binding dotted-banner-363222 \
   --member="serviceAccount:github-actions-sa@dotted-banner-363222.iam.gserviceaccount.com" \
   --role="roles/iam.serviceAccountUser"
+
+# Artifact Registry permissions
+gcloud projects add-iam-policy-binding dotted-banner-363222 \
+  --member="serviceAccount:github-actions-sa@dotted-banner-363222.iam.gserviceaccount.com" \
+  --role="roles/artifactregistry.writer"
 ```
 
-### 2. Enable Required APIs
+### 3. Verify Setup
 
-After adding permissions, enable these APIs:
+1. **Check APIs are Enabled**:
 
-```bash
-# List of essential APIs to enable
-gcloud services enable cloudbuild.googleapis.com
-gcloud services enable run.googleapis.com
-gcloud services enable artifactregistry.googleapis.com
-gcloud services enable containerregistry.googleapis.com
-gcloud services enable cloudresourcemanager.googleapis.com
-```
+   ```bash
+   # As project owner
+   gcloud services list --enabled \
+     --filter="name:cloudbuild.googleapis.com OR name:run.googleapis.com OR name:artifactregistry.googleapis.com"
+   ```
 
-### 3. Verify Service Account Permissions
-
-```bash
-# Check current permissions
-gcloud projects get-iam-policy dotted-banner-363222 \
-  --filter="bindings.members:github-actions-sa@dotted-banner-363222.iam.gserviceaccount.com" \
-  --format="table(bindings.role)"
-```
-
-## 🔍 Monitoring Deployment
-
-After applying permissions:
-
-1. **Check Service Account Status**:
-
-```bash
-gcloud iam service-accounts get-iam-policy \
-  github-actions-sa@dotted-banner-363222.iam.gserviceaccount.com
-```
-
-2. **Verify API Status**:
-
-```bash
-gcloud services list --enabled
-```
-
-3. **Monitor Build Logs**:
-
-- Build Console: https://console.cloud.google.com/cloud-build/builds?project=dotted-banner-363222
-- Cloud Run: https://console.cloud.google.com/run?project=dotted-banner-363222
-
-## 📝 Additional Notes
-
-1. **Service Account Best Practices**:
-   - Use minimum required permissions
-   - Consider using Workload Identity Federation
-   - Regularly audit permissions
-
-2. **Common Issues**:
-   - Permission denied errors usually mean missing IAM roles
-   - API not enabled errors require both permissions AND API enablement
-   - Build failures might need additional service account permissions
-
-3. **Security Considerations**:
-   - Review permissions regularly
-   - Remove unused roles
-   - Use service account key rotation if not using Workload Identity
+2. **Verify Service Account Roles**:
+   ```bash
+   gcloud projects get-iam-policy dotted-banner-363222 \
+     --filter="bindings.members:github-actions-sa@dotted-banner-363222.iam.gserviceaccount.com" \
+     --format="table(bindings.role)"
+   ```
 
 ## 🚀 Testing Deployment
 
-After applying fixes:
+After enabling APIs and setting permissions:
 
-1. **Trigger a test deployment**:
+1. **Trigger deployment**:
 
-```bash
-git add .
-git commit -m "test: Verify deployment with updated permissions"
-git push origin main
-```
+   ```bash
+   git add .
+   git commit -m "test: Verify deployment with enabled APIs"
+   git push origin main
+   ```
 
-2. **Monitor the deployment**:
-   - Check GitHub Actions tab
-   - Watch Cloud Build logs
-   - Verify Cloud Run service update
+2. **Monitor**:
+   - [GitHub Actions](https://github.com/your-org/utopia-backend/actions)
+   - [Cloud Build Console](https://console.cloud.google.com/cloud-build/builds?project=dotted-banner-363222)
+   - [Cloud Run Console](https://console.cloud.google.com/run?project=dotted-banner-363222)
 
-## 🆘 Still Having Issues?
+## 📝 Best Practices
 
-1. Check the full error message in GitHub Actions logs
-2. Verify project number matches (218476677732)
-3. Ensure service account exists and is active
-4. Review audit logs for permission denials
+1. **API Management**:
+   - Enable APIs once during project setup
+   - Keep service account permissions minimal
+   - Use separate accounts for CI/CD and API management
+
+2. **Security**:
+   - Never grant Owner/Editor to service accounts
+   - Use principle of least privilege
+   - Regularly audit permissions
+
+3. **Monitoring**:
+   - Watch Cloud Build logs for issues
+   - Monitor API quotas
+   - Set up alerts for deployment failures
+
+## 🆘 Common Issues
+
+1. **Permission Denied**:
+   - Verify APIs are enabled
+   - Check service account roles
+   - Review audit logs
+
+2. **Build Failures**:
+   - Check Cloud Build logs
+   - Verify Dockerfile
+   - Check resource quotas
+
+3. **API Issues**:
+   - Confirm API enablement
+   - Check API quotas
+   - Review service dependencies
