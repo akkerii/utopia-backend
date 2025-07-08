@@ -1,106 +1,139 @@
 # 🛠️ Deployment Troubleshooting Guide
 
-## Issue: Cloud Build Permission Error
+## Current Issue: Service Management Permission Error
 
 ### Problem
 
 ```
-ERROR: (gcloud.builds.log) [github-actions-sa@dotted-banner-363222.iam.gserviceaccount.com] does not have permission to access 218476677732.cloudbuild-logs.googleusercontent.com instance
+ERROR: (gcloud.services.list) [github-actions-sa@dotted-banner-363222.iam.gserviceaccount.com] does not have permission to access projects instance [dotted-banner-363222]
 ```
 
 ### Root Cause
 
-The GitHub Actions service account `github-actions-sa@dotted-banner-363222.iam.gserviceaccount.com` doesn't have sufficient permissions to:
+The GitHub Actions service account lacks necessary permissions to:
 
-1. Access Cloud Build logs
-2. Potentially other required Cloud Build operations
+1. List and manage services
+2. Access project resources
+3. Manage Cloud Build and Cloud Run
 
-## 🔧 Solution Steps
+## 🔧 Immediate Fix
 
-### 1. Check Current Service Account Permissions
+### 1. Add Required Service Management Roles
 
-```bash
-gcloud projects get-iam-policy dotted-banner-363222 \
-  --filter="bindings.members:github-actions-sa@dotted-banner-363222.iam.gserviceaccount.com" \
-  --format="table(bindings.role)"
-```
-
-### 2. Add Required Permissions
-
-The service account needs these roles:
+Run these commands in Cloud Shell or local gcloud CLI:
 
 ```bash
+# Service Management permissions
+gcloud projects add-iam-policy-binding dotted-banner-363222 \
+  --member="serviceAccount:github-actions-sa@dotted-banner-363222.iam.gserviceaccount.com" \
+  --role="roles/serviceusage.serviceUsageViewer"
+
+gcloud projects add-iam-policy-binding dotted-banner-363222 \
+  --member="serviceAccount:github-actions-sa@dotted-banner-363222.iam.gserviceaccount.com" \
+  --role="roles/serviceusage.serviceUsageAdmin"
+
+# Project level access
+gcloud projects add-iam-policy-binding dotted-banner-363222 \
+  --member="serviceAccount:github-actions-sa@dotted-banner-363222.iam.gserviceaccount.com" \
+  --role="roles/viewer"
+
 # Cloud Build permissions
 gcloud projects add-iam-policy-binding dotted-banner-363222 \
   --member="serviceAccount:github-actions-sa@dotted-banner-363222.iam.gserviceaccount.com" \
   --role="roles/cloudbuild.builds.builder"
 
-# Storage permissions for logs
+# Cloud Run permissions
 gcloud projects add-iam-policy-binding dotted-banner-363222 \
   --member="serviceAccount:github-actions-sa@dotted-banner-363222.iam.gserviceaccount.com" \
-  --role="roles/storage.objectViewer"
+  --role="roles/run.admin"
 
-# Cloud Build logs viewer
+# Service Account User role (needed to act as service account)
 gcloud projects add-iam-policy-binding dotted-banner-363222 \
   --member="serviceAccount:github-actions-sa@dotted-banner-363222.iam.gserviceaccount.com" \
-  --role="roles/cloudbuild.builds.viewer"
-
-# Cloud Run deployment permissions
-gcloud projects add-iam-policy-binding dotted-banner-363222 \
-  --member="serviceAccount:github-actions-sa@dotted-banner-363222.iam.gserviceaccount.com" \
-  --role="roles/run.developer"
-
-# Artifact Registry permissions
-gcloud projects add-iam-policy-binding dotted-banner-363222 \
-  --member="serviceAccount:github-actions-sa@dotted-banner-363222.iam.gserviceaccount.com" \
-  --role="roles/artifactregistry.writer"
+  --role="roles/iam.serviceAccountUser"
 ```
 
-### 3. Verify APIs are Enabled
+### 2. Enable Required APIs
+
+After adding permissions, enable these APIs:
 
 ```bash
+# List of essential APIs to enable
 gcloud services enable cloudbuild.googleapis.com
 gcloud services enable run.googleapis.com
 gcloud services enable artifactregistry.googleapis.com
-gcloud services enable storage.googleapis.com
+gcloud services enable containerregistry.googleapis.com
+gcloud services enable cloudresourcemanager.googleapis.com
 ```
 
-### 4. Alternative: Use Workload Identity Federation (Recommended)
+### 3. Verify Service Account Permissions
 
-Instead of using service account keys, consider using Workload Identity Federation for better security:
+```bash
+# Check current permissions
+gcloud projects get-iam-policy dotted-banner-363222 \
+  --filter="bindings.members:github-actions-sa@dotted-banner-363222.iam.gserviceaccount.com" \
+  --format="table(bindings.role)"
+```
 
-1. Create a Workload Identity Pool
-2. Configure the GitHub provider
-3. Update the workflow to use `google-github-actions/auth@v2` with `workload_identity_provider`
+## 🔍 Monitoring Deployment
 
-## 🚀 Quick Fix Applied
+After applying permissions:
 
-The deployment workflow has been updated to:
+1. **Check Service Account Status**:
 
-1. ✅ Remove the problematic `gcloud builds log` command
-2. ✅ Add better error handling with build URLs for manual log viewing
-3. ✅ Add timeout management (30 minutes)
-4. ✅ Provide debugging information for permission issues
+```bash
+gcloud iam service-accounts get-iam-policy \
+  github-actions-sa@dotted-banner-363222.iam.gserviceaccount.com
+```
 
-## 📊 Test the Deployment
+2. **Verify API Status**:
 
-After applying the permissions, test with:
+```bash
+gcloud services list --enabled
+```
+
+3. **Monitor Build Logs**:
+
+- Build Console: https://console.cloud.google.com/cloud-build/builds?project=dotted-banner-363222
+- Cloud Run: https://console.cloud.google.com/run?project=dotted-banner-363222
+
+## 📝 Additional Notes
+
+1. **Service Account Best Practices**:
+   - Use minimum required permissions
+   - Consider using Workload Identity Federation
+   - Regularly audit permissions
+
+2. **Common Issues**:
+   - Permission denied errors usually mean missing IAM roles
+   - API not enabled errors require both permissions AND API enablement
+   - Build failures might need additional service account permissions
+
+3. **Security Considerations**:
+   - Review permissions regularly
+   - Remove unused roles
+   - Use service account key rotation if not using Workload Identity
+
+## 🚀 Testing Deployment
+
+After applying fixes:
+
+1. **Trigger a test deployment**:
 
 ```bash
 git add .
-git commit -m "fix: Update deployment permissions and error handling"
+git commit -m "test: Verify deployment with updated permissions"
 git push origin main
 ```
 
-## 🔍 Monitoring
+2. **Monitor the deployment**:
+   - Check GitHub Actions tab
+   - Watch Cloud Build logs
+   - Verify Cloud Run service update
 
-- **Build Logs**: https://console.cloud.google.com/cloud-build/builds?project=dotted-banner-363222
-- **Cloud Run**: https://console.cloud.google.com/run?project=dotted-banner-363222
-- **IAM**: https://console.cloud.google.com/iam-admin/iam?project=dotted-banner-363222
+## 🆘 Still Having Issues?
 
-## 📝 Notes
-
-- The workflow now provides direct links to Cloud Build logs in the console
-- Build failures will show the build ID and console URL for manual inspection
-- Added 30-minute timeout to prevent infinite waiting
-- Enhanced debugging output for troubleshooting permissions
+1. Check the full error message in GitHub Actions logs
+2. Verify project number matches (218476677732)
+3. Ensure service account exists and is active
+4. Review audit logs for permission denials
