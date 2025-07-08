@@ -11,6 +11,7 @@ class SessionService {
       mode,
       currentAgent:
         mode === Mode.ENTREPRENEUR ? AgentType.IDEA : AgentType.STRATEGY,
+      currentModule: ModuleType.IDEA_CONCEPT,
       contextBuckets: new Map(),
       conversationHistory: [],
       createdAt: new Date(),

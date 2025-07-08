@@ -8,21 +8,25 @@ import { sessionService } from "./services/sessionService";
 dotenv.config();
 
 const app = express();
-const PORT = parseInt(process.env.PORT || '3000', 10);
-const HOST = process.env.HOST || '0.0.0.0'; // Listen on all network interfaces
-
+const PORT = parseInt(process.env.PORT || "3000", 10);
+const HOST = process.env.HOST || "0.0.0.0"; // Listen on all network interfaces
 
 // CORS configuration
 const corsOptions = {
   origin: [
-    'https://utopia-frontend-218476677732.us-central1.run.app',
-    'http://localhost:3000',
-    'http://localhost:3001'
+    "https://utopia-frontend-218476677732.us-central1.run.app",
+    "http://localhost:3000",
+    "http://localhost:3001",
+    "http://localhost:3003", // Add support for frontend on port 3003
   ],
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'ngrok-skip-browser-warning'],
+  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+  allowedHeaders: [
+    "Content-Type",
+    "Authorization",
+    "ngrok-skip-browser-warning",
+  ],
   credentials: true,
-  optionsSuccessStatus: 200
+  optionsSuccessStatus: 200,
 };
 
 // Middleware
@@ -40,6 +44,7 @@ app.get("/", (_req, res) => {
     version: "1.0.0",
     endpoints: {
       chat: "POST /api/chat",
+      models: "GET /api/models",
       session: "GET /api/session/:sessionId",
       clearSession: "POST /api/session/:sessionId/clear",
       health: "GET /api/health",

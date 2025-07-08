@@ -7,10 +7,15 @@ import {
   ModuleUpdate,
   Mode,
   ModuleType,
+  StructuredResponse,
+  OpenAIModel,
+  AgentType,
 } from "../types";
 import { sessionService } from "./sessionService";
 import { openAIService } from "./openAIService";
-import { AgentOrchestrator } from "../agents/agentOrchestrator";
+import { AIOrchestrator } from "../agents/aiOrchestrator";
+import { getEnhancedAgentPrompt } from "../agents/enhancedAgentPrompts";
+// import { IntelligentQuestion } from "../agents/intelligentQuestioningEngine";
 
 class ChatService {
   async processMessage(request: ChatRequest): Promise<ChatResponse> {
@@ -27,87 +32,291 @@ class ChatService {
       session = sessionService.createSession(mode);
     }
 
+    // Handle model selection
+    let selectedModel: OpenAIModel;
+    if (request.model && openAIService.isValidModel(request.model)) {
+      selectedModel = request.model;
+      // Update session's preferred model
+      session.preferredModel = selectedModel;
+    } else {
+      // Use session's preferred model or default
+      selectedModel = session.preferredModel || openAIService.getDefaultModel();
+    }
+
+    console.log(`🤖 Using model: ${selectedModel} for session: ${session.id}`);
+
     try {
-      // Add user message to conversation history
-      const userMessage: ConversationMessage = {
-        id: uuidv4(),
-        role: "user",
-        content: request.message,
-        timestamp: new Date(),
-      };
-      session.conversationHistory.push(userMessage);
-
-      // Check if this is an explicit module transition request
-      const moduleTransitionRegex =
-        /(?:let'?s?|can we|move to|switch to|go to|work on|focus on|nice let'?s?) (?:the )?([a-z\s]+)(?: module| section)?/i;
-      const match = request.message.match(moduleTransitionRegex);
-
-      let explicitModuleRequest: ModuleType | undefined;
-
-      if (match) {
-        const requestedModuleName = match[1].trim().toLowerCase();
-        // Map the requested module name to a ModuleType
-        explicitModuleRequest = this.mapTextToModuleType(requestedModuleName);
-        console.log("Module transition detected:", {
-          requestedModuleName,
-          mappedModule: explicitModuleRequest,
-          currentModule: session.currentModule,
-        });
+      // Handle structured responses if provided
+      let userMessage = request.message;
+      if (
+        request.structuredResponses &&
+        request.structuredResponses.length > 0
+      ) {
+        userMessage = this.formatStructuredResponses(
+          request.message,
+          request.structuredResponses
+        );
       }
 
-      // Determine which agent should handle this
-      const agentDecision = AgentOrchestrator.determineAgent(
-        session,
-        request.message,
-        explicitModuleRequest || session.currentModule
-      );
+      // Add user message to conversation history
+      const userMessageObj: ConversationMessage = {
+        id: uuidv4(),
+        role: "user",
+        content: userMessage,
+        timestamp: new Date(),
+        structuredResponses: request.structuredResponses,
+      };
+      session.conversationHistory.push(userMessageObj);
 
-      console.log("Agent decision:", {
-        agent: agentDecision.agent,
-        module: agentDecision.module,
-        isTransition: agentDecision.isTransition,
+      // Use AI Orchestrator to make intelligent decisions
+      const orchestrationDecision =
+        await AIOrchestrator.orchestrateConversation(
+          session,
+          userMessage,
+          session.conversationHistory.length > 0
+            ? session.conversationHistory[
+                session.conversationHistory.length - 1
+              ].content
+            : undefined
+        );
+
+      console.log("AI Orchestration decision:", {
+        agent: orchestrationDecision.agent,
+        module: orchestrationDecision.module,
+        reasoning: orchestrationDecision.reasoning,
+        shouldTransition: orchestrationDecision.shouldTransition,
         previousModule: session.currentModule,
       });
 
-      // Check if this is a module transition
-      const isModuleTransition =
-        agentDecision.isTransition &&
-        agentDecision.module !== session.currentModule;
+      // ----- Enhanced tolerant validation for agent/module names -----
+      const normalizeAgent = (agentStr: string | undefined): AgentType => {
+        if (!agentStr) return AgentType.IDEA;
+        const lower = agentStr.toLowerCase();
+        const found = (Object.values(AgentType) as string[]).find(
+          (a) => a.toLowerCase() === lower
+        );
+        return (found as AgentType) || AgentType.IDEA;
+      };
 
-      // Update session with current agent and module
-      session.currentAgent = agentDecision.agent;
+      const normalizeModule = (
+        modStr: string | undefined
+      ): ModuleType | undefined => {
+        if (!modStr) return undefined;
+        const formatted = modStr.toLowerCase().replace(/\s+/g, "_");
+        return (Object.values(ModuleType) as string[]).find(
+          (m) => m === formatted
+        ) as ModuleType | undefined;
+      };
+
+      const validAgent = normalizeAgent(orchestrationDecision.agent);
+
+      // Store previous module BEFORE we potentially update it
       const previousModule = session.currentModule;
-      if (agentDecision.module) {
-        session.currentModule = agentDecision.module;
+
+      // Apply validated agent to session
+      session.currentAgent = validAgent;
+
+      // Validate module with normalization
+      let validModule = session.currentModule;
+      if (
+        orchestrationDecision.module === null ||
+        orchestrationDecision.module === "null"
+      ) {
+        validModule = undefined;
+      } else {
+        const normalized = normalizeModule(orchestrationDecision.module);
+        if (normalized) {
+          validModule = normalized;
+        } else if (orchestrationDecision.module) {
+          console.warn(
+            `Invalid module type from AI after normalization: ${orchestrationDecision.module}, keeping current: ${session.currentModule}`
+          );
+        }
       }
 
-      // Build context for the agent including data from all modules
-      const context = this.buildEnhancedAgentContext(session);
+      // Validate and set module
+      if (validModule) {
+        // Ensure the module is a valid ModuleType
+        const validModules = Object.values(ModuleType);
+        if (validModules.includes(validModule)) {
+          session.currentModule = validModule;
+        } else {
+          console.error("Invalid module from orchestrator:", validModule);
+          console.error("Valid modules:", validModules);
+          // Keep the current module if invalid
+        }
+      }
 
-      // Generate AI response with transition context if needed
+      // Auto-populate newly activated modules with an initial summary
+      if (validModule) {
+        await this.autoPopulateModuleIfEmpty(
+          session,
+          validModule,
+          selectedModel
+        );
+
+        // If we've just completed Target Market, auto-populate all strategic modules
+        if (
+          validModule === ModuleType.VALUE_PROPOSITION &&
+          previousModule === ModuleType.TARGET_MARKET
+        ) {
+          console.log(
+            "🚀 Target Market completed - auto-generating all strategic modules"
+          );
+          await this.autoPopulateModuleIfEmpty(
+            session,
+            ModuleType.BUSINESS_MODEL,
+            selectedModel
+          );
+          await this.autoPopulateModuleIfEmpty(
+            session,
+            ModuleType.MARKETING_STRATEGY,
+            selectedModel
+          );
+        }
+      }
+
+      // Recompute if this is a module transition after validation
+      const isModuleTransition =
+        orchestrationDecision.shouldTransition &&
+        validModule !== previousModule;
+
+      // Build enhanced context using AI insights
+      const context = this.buildAIEnhancedContext(
+        session,
+        orchestrationDecision
+      );
+
+      // Generate AI response using enhanced agent prompts with intelligent context
       let promptPrefix = "";
-      if (isModuleTransition && previousModule && agentDecision.module) {
-        promptPrefix = `The user is transitioning from ${previousModule} to ${agentDecision.module}. 
-        Acknowledge this transition and guide them through the ${agentDecision.module} module.
-        Reference relevant information from previous modules if applicable.
-        Previous module data: ${JSON.stringify(this.getPreviousModuleData(session, previousModule))}.
+      if (
+        isModuleTransition &&
+        previousModule &&
+        orchestrationDecision.module
+      ) {
+        promptPrefix = `🔄 INTELLIGENT TRANSITION: Moving from ${previousModule} to ${orchestrationDecision.module}
+        
+AI Orchestrator Reasoning: ${orchestrationDecision.reasoning}
+Context Summary: ${orchestrationDecision.contextSummary}
+
+Acknowledge this transition intelligently and guide them through the ${orchestrationDecision.module} module.
+Build upon the insights and data already gathered.
         `;
       }
 
-      const aiResponse = await openAIService.generateAgentResponse(
-        agentDecision.agent,
-        promptPrefix + request.message,
-        context
-      );
+      // Check if AI orchestrator suggests transition to next module
+      const shouldTransition = orchestrationDecision.shouldTransition;
+
+      let finalResponse: string;
+      let finalStructuredQuestions: any[] = [];
+
+      if (shouldTransition && validModule) {
+        // Generate intelligent transition using AI context
+        const synthesisModules: ModuleType[] = [
+          ModuleType.VALUE_PROPOSITION,
+          ModuleType.BUSINESS_MODEL,
+          ModuleType.MARKETING_STRATEGY,
+        ];
+
+        const transitionPrompt = (() => {
+          if (synthesisModules.includes(validModule!)) {
+            return `${promptPrefix}
+
+Excellent! I've analyzed your business idea and target market to generate a comprehensive **${this.getModuleDescription(validModule!)}** for you. 
+
+You can now view the detailed ${this.getModuleDescription(validModule!)} in the sidebar by clicking on the "${this.getModuleTitle(validModule!)}" section. The content includes actionable recommendations and strategies tailored to your business.
+
+I'm here to help you refine, discuss, or expand on any aspect of the ${this.getModuleDescription(validModule!)}. What would you like to explore further or modify?
+
+*Note: You can also access your Business Model and Marketing Strategy in the sidebar - I've generated comprehensive plans for all three strategic areas.*`;
+          }
+
+          return `${promptPrefix}
+
+The AI Orchestrator has determined it's time to progress. 
+
+ORCHESTRATOR INSIGHTS:
+- Context Summary: ${orchestrationDecision.contextSummary}
+- Reasoning: ${orchestrationDecision.reasoning}
+- Suggested Questions: ${orchestrationDecision.suggestedQuestions.join("; ")}
+
+Please provide:
+1. Acknowledgment of what we've accomplished so far
+2. Intelligent transition to the new focus area
+3. Initial questions that build on our accumulated understanding
+
+Use the enhanced agent prompt capabilities to create a seamless, intelligent transition.`;
+        })();
+
+        const generateQuestionsForTransition = !synthesisModules.includes(
+          validModule!
+        );
+
+        const aiResponseData = await this.generateEnhancedAgentResponse(
+          validAgent,
+          transitionPrompt,
+          context,
+          selectedModel,
+          generateQuestionsForTransition,
+          session
+        );
+
+        finalResponse = aiResponseData.response;
+        finalStructuredQuestions = aiResponseData.structuredQuestions || [];
+      } else {
+        // Normal processing with AI-enhanced context awareness
+        const shouldGenerateStructuredQuestions =
+          this.shouldGenerateIntelligentQuestions(
+            session,
+            userMessage,
+            orchestrationDecision
+          );
+
+        // Check if module is complete - if so, don't generate questions
+        const moduleComplete =
+          session.currentModule &&
+          AIOrchestrator.isModuleReadyForTransition(
+            session.id,
+            session.currentModule
+          );
+
+        const aiResponseData = await this.generateEnhancedAgentResponse(
+          validAgent,
+          promptPrefix + userMessage,
+          context,
+          selectedModel,
+          shouldGenerateStructuredQuestions && !moduleComplete, // Don't generate questions if module is complete
+          session
+        );
+
+        finalResponse = aiResponseData.response;
+        finalStructuredQuestions = aiResponseData.structuredQuestions || [];
+
+        // If module is complete, add a transition message
+        if (
+          moduleComplete &&
+          !orchestrationDecision.shouldTransition &&
+          session.currentModule
+        ) {
+          const nextModule = AIOrchestrator.getNextModule(
+            session.currentModule
+          );
+          if (nextModule) {
+            finalResponse += `\n\n✅ Great! I have a solid understanding of ${this.getModuleDescription(session.currentModule)}. When you're ready, we can move on to explore ${this.getModuleDescription(nextModule)}.`;
+          }
+        }
+      }
 
       // Add AI response to conversation history
       const assistantMessage: ConversationMessage = {
         id: uuidv4(),
         role: "assistant",
-        content: aiResponse,
-        agent: agentDecision.agent,
+        content: finalResponse,
+        agent: validAgent,
         module: session.currentModule,
         timestamp: new Date(),
+        model: selectedModel,
+        structuredQuestions: finalStructuredQuestions,
       };
       session.conversationHistory.push(assistantMessage);
 
@@ -116,17 +325,19 @@ class ChatService {
 
       if (session.currentModule) {
         // Try to extract structured data from the conversation
-        const combinedText = `User: ${request.message}\nAssistant: ${aiResponse}`;
+        const combinedText = `User: ${userMessage}\nAssistant: ${finalResponse}`;
         const extractedData = await openAIService.extractStructuredData(
           combinedText,
-          session.currentModule
+          session.currentModule,
+          selectedModel
         );
 
         if (Object.keys(extractedData).length > 0) {
           // Generate a summary
           const summary = await openAIService.generateModuleSummary(
             session.currentModule,
-            extractedData
+            extractedData,
+            selectedModel
           );
 
           // Update the context bucket
@@ -153,17 +364,40 @@ class ChatService {
       sessionService.updateSession(session.id, session);
 
       return {
-        message: aiResponse,
+        message: finalResponse,
         sessionId: session.id,
         agent: session.currentAgent,
         currentModule: session.currentModule,
-        isModuleTransition,
+        isModuleTransition: isModuleTransition || shouldTransition,
         updatedModules,
+        structuredQuestions: finalStructuredQuestions,
+        currentModel: selectedModel,
       };
     } catch (error) {
       console.error("Error processing message:", error);
       throw error;
     }
+  }
+
+  private formatStructuredResponses(
+    originalMessage: string,
+    responses: StructuredResponse[]
+  ): string {
+    let formattedMessage = originalMessage;
+
+    if (responses.length > 0) {
+      formattedMessage += "\n\nResponses to your questions:";
+      responses.forEach((response, index) => {
+        formattedMessage += `\n${index + 1}. ${response.question}`;
+        if (Array.isArray(response.response)) {
+          formattedMessage += `\n   Answer: ${response.response.join(", ")}`;
+        } else {
+          formattedMessage += `\n   Answer: ${response.response}`;
+        }
+      });
+    }
+
+    return formattedMessage;
   }
 
   // Enhanced context builder that includes data from all modules
@@ -202,84 +436,6 @@ class ChatService {
     return context;
   }
 
-  // Get data from a specific module
-  private getPreviousModuleData(session: Session, moduleType: ModuleType) {
-    const bucket = session.contextBuckets.get(moduleType);
-    if (!bucket) return {};
-    return {
-      data: bucket.data,
-      summary: bucket.summary,
-      completionStatus: bucket.completionStatus,
-    };
-  }
-
-  // Map text to ModuleType
-  private mapTextToModuleType(text: string): ModuleType | undefined {
-    const normalizedText = text.toLowerCase().trim();
-
-    const moduleMap: Record<string, ModuleType> = {
-      // Idea/Concept variations
-      idea: ModuleType.IDEA_CONCEPT,
-      concept: ModuleType.IDEA_CONCEPT,
-      "business idea": ModuleType.IDEA_CONCEPT,
-      "idea concept": ModuleType.IDEA_CONCEPT,
-
-      // Target Market variations
-      target: ModuleType.TARGET_MARKET,
-      market: ModuleType.TARGET_MARKET,
-      "target market": ModuleType.TARGET_MARKET,
-      customers: ModuleType.TARGET_MARKET,
-      "target customers": ModuleType.TARGET_MARKET,
-      customer: ModuleType.TARGET_MARKET,
-
-      // Value Proposition variations
-      value: ModuleType.VALUE_PROPOSITION,
-      proposition: ModuleType.VALUE_PROPOSITION,
-      "value proposition": ModuleType.VALUE_PROPOSITION,
-      "unique value": ModuleType.VALUE_PROPOSITION,
-
-      // Business Model variations
-      business: ModuleType.BUSINESS_MODEL,
-      model: ModuleType.BUSINESS_MODEL,
-      "business model": ModuleType.BUSINESS_MODEL,
-      revenue: ModuleType.BUSINESS_MODEL,
-      "revenue model": ModuleType.BUSINESS_MODEL,
-
-      // Marketing Strategy variations
-      marketing: ModuleType.MARKETING_STRATEGY,
-      strategy: ModuleType.MARKETING_STRATEGY,
-      "marketing strategy": ModuleType.MARKETING_STRATEGY,
-      promotion: ModuleType.MARKETING_STRATEGY,
-
-      // Operations Plan variations
-      operations: ModuleType.OPERATIONS_PLAN,
-      plan: ModuleType.OPERATIONS_PLAN,
-      "operations plan": ModuleType.OPERATIONS_PLAN,
-      operation: ModuleType.OPERATIONS_PLAN,
-
-      // Financial Plan variations
-      financial: ModuleType.FINANCIAL_PLAN,
-      finance: ModuleType.FINANCIAL_PLAN,
-      "financial plan": ModuleType.FINANCIAL_PLAN,
-      finances: ModuleType.FINANCIAL_PLAN,
-      budget: ModuleType.FINANCIAL_PLAN,
-    };
-
-    // Try exact match first
-    if (moduleMap[normalizedText]) {
-      return moduleMap[normalizedText];
-    }
-
-    // Try partial matches
-    for (const [key, value] of Object.entries(moduleMap)) {
-      if (normalizedText.includes(key) || key.includes(normalizedText)) {
-        return value;
-      }
-    }
-
-    return undefined;
-  }
-
   // Get session data (for dashboard display)
   getSessionData(sessionId: string) {
     const session = sessionService.getSession(sessionId);
@@ -314,6 +470,9 @@ class ChatService {
       return false;
     }
 
+    // Clear AI orchestrator memory as well
+    AIOrchestrator.clearSessionMemory(sessionId);
+
     // Create new session with same mode
     const newSession = sessionService.createSession(session.mode);
 
@@ -325,7 +484,506 @@ class ChatService {
 
     return true;
   }
+
+  /**
+   * Build AI-enhanced context that integrates intelligent insights and bucket system
+   */
+  private buildAIEnhancedContext(
+    session: Session,
+    orchestrationDecision: any
+  ): string {
+    // Get intelligent context from AI orchestrator
+    const intelligentContext = AIOrchestrator.getIntelligentContext(session.id);
+
+    // Get bucket-based insights
+    const bucketSummary = AIOrchestrator.getBucketSummary(session.id);
+
+    // Build traditional context
+    const traditionalContext = this.buildEnhancedAgentContext(session);
+
+    // Combine with AI insights
+    return `
+**🧠 Intelligent Business Understanding**:
+${bucketSummary}
+
+**📊 AI Orchestrator Insights**:
+- Decision Reasoning: ${orchestrationDecision.reasoning}
+- Context Summary: ${orchestrationDecision.contextSummary}
+- Suggested Questions: ${orchestrationDecision.suggestedQuestions.join("; ")}
+
+**🎯 Progressive Context Memory**:
+${intelligentContext}
+
+**📁 Module Data Context**:
+${traditionalContext}
+
+**🔄 Conversation Strategy**:
+This conversation uses intelligent bucket-filling to progressively build business understanding. 
+Build upon accumulated insights while filling knowledge gaps collaboratively.
+    `.trim();
+  }
+
+  /**
+   * Generate enhanced agent response using new prompts and AI context
+   */
+  private async generateEnhancedAgentResponse(
+    agent: string,
+    message: string,
+    context: string,
+    model: OpenAIModel,
+    shouldGenerateQuestions: boolean,
+    session?: Session
+  ): Promise<{ response: string; structuredQuestions?: any[] }> {
+    // Get enhanced agent prompt
+    const enhancedPrompt = getEnhancedAgentPrompt(agent as any);
+
+    // Combine enhanced prompt with context
+    const fullPrompt = `${enhancedPrompt}
+
+**CURRENT CONTEXT**:
+${context}
+
+**USER MESSAGE**: ${message}
+
+Please respond using your enhanced capabilities, building upon the conversation memory and context provided.
+${shouldGenerateQuestions ? "Include structured questions using the [STRUCTURED_QUESTIONS] format when appropriate." : ""}`;
+
+    try {
+      const response = await openAIService.generateResponse(
+        fullPrompt,
+        0.7,
+        model
+      );
+
+      // Parse structured questions if they exist
+      let structuredQuestions: any[] = [];
+      if (shouldGenerateQuestions) {
+        // Try to use enhanced structured question generation first
+        if (session) {
+          try {
+            const enhancedQuestions =
+              await this.generateEnhancedStructuredQuestions(session, message);
+            if (enhancedQuestions.length > 0) {
+              structuredQuestions = enhancedQuestions;
+            }
+          } catch (error) {
+            console.error("Error generating enhanced questions:", error);
+          }
+        }
+
+        // Fall back to traditional parsing if enhanced questions failed
+        if (structuredQuestions.length === 0) {
+          const questionsMatch = response.match(
+            /\[STRUCTURED_QUESTIONS\]([\s\S]*?)\[\/STRUCTURED_QUESTIONS\]/
+          );
+          if (questionsMatch) {
+            // Parse the questions (this is a simplified parser)
+            const questionsText = questionsMatch[1];
+            const questionLines = questionsText
+              .split("\n")
+              .filter((line) => line.trim().length > 0);
+
+            structuredQuestions = questionLines
+              .map((line, index) => {
+                const match = line.match(/^\d+\.\s*(.+?)\s*\((.+?)\)/);
+                if (match) {
+                  const question = match[1].trim();
+                  const optionsText = match[2];
+
+                  if (optionsText.includes("buttons:")) {
+                    const buttonsMatch = optionsText.match(/buttons:\s*(.+)/);
+                    if (buttonsMatch) {
+                      const buttons = buttonsMatch[1]
+                        .split(",")
+                        .map((b) => b.trim());
+                      return {
+                        id: `q_${index}`,
+                        question,
+                        // Use the "buttons" type expected by the frontend
+                        type: "buttons",
+                        options: buttons,
+                      };
+                    }
+                  } else if (optionsText.includes("textarea")) {
+                    return {
+                      id: `q_${index}`,
+                      question,
+                      // Map to textarea for open-ended answers
+                      type: "textarea",
+                    };
+                  }
+                }
+                return null;
+              })
+              .filter((q) => q !== null);
+          }
+        }
+      }
+
+      // Remove structured questions from response
+      const cleanResponse = response
+        .replace(
+          /\[STRUCTURED_QUESTIONS\][\s\S]*?\[\/STRUCTURED_QUESTIONS\]/g,
+          ""
+        )
+        .trim();
+
+      return {
+        response: cleanResponse,
+        structuredQuestions:
+          structuredQuestions.length > 0 ? structuredQuestions : undefined,
+      };
+    } catch (error) {
+      console.error("Error in enhanced agent response:", error);
+      // Fallback to traditional method
+      return await openAIService.generateAgentResponse(
+        agent as any,
+        message,
+        context,
+        0.7,
+        model,
+        shouldGenerateQuestions
+      );
+    }
+  }
+
+  /**
+   * Determine if intelligent questions should be generated using enhanced bucket system
+   */
+  private shouldGenerateIntelligentQuestions(
+    session: Session,
+    userMessage: string,
+    orchestrationDecision: any
+  ): boolean {
+    // Use AI orchestrator's intelligent bucket system
+    const shouldGenerate = AIOrchestrator.shouldGenerateQuestions(
+      session.id,
+      session.currentModule || ModuleType.IDEA_CONCEPT
+    );
+
+    // Check if we haven't asked questions recently
+    const recentMessages = session.conversationHistory.slice(-3);
+    const hasRecentQuestions = recentMessages.some(
+      (msg) =>
+        msg.role === "assistant" &&
+        msg.structuredQuestions &&
+        msg.structuredQuestions.length > 0
+    );
+
+    // Enhanced logic: Generate questions based on conversation depth and bucket completeness
+    const conversationDepth = session.conversationHistory.length;
+    const isEarlyConversation = conversationDepth < 6;
+
+    // Check if orchestrator suggests questions
+    const orchestratorSuggests =
+      orchestrationDecision.suggestedQuestions.length > 0;
+
+    // Check if user is asking for guidance
+    const lowerMsg = userMessage.toLowerCase();
+    const isAskingForHelp =
+      lowerMsg.includes("help") ||
+      lowerMsg.includes("what should") ||
+      lowerMsg.includes("how do i") ||
+      lowerMsg.includes("guide me") ||
+      lowerMsg.includes("tell me about");
+
+    // ----- NEW LOGIC: limit structured-question rounds per module to 3 -----
+    const structuredQuestionRoundsForModule =
+      session.conversationHistory.filter(
+        (msg) =>
+          msg.role === "assistant" &&
+          msg.module === session.currentModule &&
+          msg.structuredQuestions &&
+          msg.structuredQuestions.length > 0
+      ).length;
+
+    const reachedQuestionLimit = structuredQuestionRoundsForModule >= 3; // max 3 rounds per module
+
+    // Generate questions if user gave brief/vague responses that need expansion
+    const userMessageLength = userMessage.trim().length;
+    const needsExpansion = userMessageLength < 50 && conversationDepth > 2;
+
+    // Check if user just submitted responses and we need intelligent follow-up
+    const userJustSubmittedResponses = recentMessages.some(
+      (msg) =>
+        msg.role === "user" &&
+        msg.structuredResponses &&
+        msg.structuredResponses.length > 0
+    );
+
+    // For advanced synthesis modules, if we already have a summary, stop questioning and switch to guidance mode
+    const synthesisModules = [
+      ModuleType.VALUE_PROPOSITION,
+      ModuleType.BUSINESS_MODEL,
+      ModuleType.MARKETING_STRATEGY,
+    ];
+
+    if (
+      synthesisModules.includes(
+        session.currentModule || ModuleType.IDEA_CONCEPT
+      )
+    ) {
+      const bucket = session.contextBuckets.get(session.currentModule!);
+      if (bucket && bucket.summary) {
+        return false; // don't generate more questions, provide guidance instead
+      }
+    }
+
+    // If current module is synthesis type, default to not generate questions
+    if (
+      synthesisModules.includes(
+        session.currentModule || ModuleType.IDEA_CONCEPT
+      )
+    ) {
+      return false;
+    }
+
+    // Generate questions if:
+    // 1. AI orchestrator determines we need more information (bucket system)
+    // 2. We're in early conversation (bucket building phase)
+    // 3. Orchestrator suggests questions and we haven't asked recently
+    // 4. User gave brief/vague responses that need expansion
+    // 5. User is asking for help/guidance
+    // 6. User just submitted responses and we need intelligent follow-up
+    // 7. Module transition needs validation
+    // 8. We have not exceeded the per-module question limit
+    return (
+      (shouldGenerate ||
+        (isEarlyConversation && !hasRecentQuestions) ||
+        (orchestratorSuggests && !hasRecentQuestions) ||
+        needsExpansion ||
+        isAskingForHelp ||
+        userJustSubmittedResponses ||
+        (orchestrationDecision.shouldTransition && !reachedQuestionLimit)) &&
+      !reachedQuestionLimit
+    );
+  }
+
+  /**
+   * Get human-readable module description
+   */
+  private getModuleDescription(moduleType: ModuleType): string {
+    const descriptions: Record<ModuleType, string> = {
+      [ModuleType.IDEA_CONCEPT]: "your business idea and the problem it solves",
+      [ModuleType.TARGET_MARKET]: "your target market and customer segments",
+      [ModuleType.VALUE_PROPOSITION]: "your unique value proposition",
+      [ModuleType.BUSINESS_MODEL]: "your business model and revenue strategy",
+      [ModuleType.MARKETING_STRATEGY]:
+        "your marketing and customer acquisition strategy",
+      [ModuleType.OPERATIONS_PLAN]: "your operations and execution plan",
+      [ModuleType.FINANCIAL_PLAN]:
+        "your financial projections and funding needs",
+    };
+
+    return descriptions[moduleType] || moduleType;
+  }
+
+  // Helper function to get module title
+  private getModuleTitle(moduleType: ModuleType): string {
+    const titles: Record<ModuleType, string> = {
+      [ModuleType.IDEA_CONCEPT]: "Your Idea",
+      [ModuleType.TARGET_MARKET]: "Target Market",
+      [ModuleType.VALUE_PROPOSITION]: "Value Proposition",
+      [ModuleType.BUSINESS_MODEL]: "Business Model",
+      [ModuleType.MARKETING_STRATEGY]: "Marketing Strategy",
+      [ModuleType.OPERATIONS_PLAN]: "Operations Plan",
+      [ModuleType.FINANCIAL_PLAN]: "Financial Plan",
+    };
+    return titles[moduleType] || moduleType.replace(/_/g, " ");
+  }
+
+  /**
+   * Generate enhanced structured questions using intelligent questioning engine
+   */
+  private async generateEnhancedStructuredQuestions(
+    session: Session,
+    userMessage: string
+  ): Promise<any[]> {
+    // Build insight buckets from conversation
+    const buckets = await AIOrchestrator.buildInsightBuckets(
+      session,
+      userMessage,
+      session.conversationHistory.length > 0
+        ? session.conversationHistory[session.conversationHistory.length - 1]
+            .content
+        : undefined
+    );
+
+    // Update buckets in memory
+    await AIOrchestrator.updateInsightBuckets(session.id, buckets);
+
+    // Generate intelligent questions
+    const intelligentQuestions = await AIOrchestrator.generateSmartQuestions(
+      session,
+      userMessage,
+      session.currentModule || ModuleType.IDEA_CONCEPT
+    );
+
+    // Convert to structured questions format
+    return intelligentQuestions.map((q) => ({
+      id: q.id,
+      question: q.question,
+      // Align types with frontend expectations (buttons | textarea)
+      type:
+        q.adaptiveOptions && q.adaptiveOptions.length > 0
+          ? "buttons"
+          : "textarea",
+      options: q.adaptiveOptions || [],
+      required: false,
+      placeholder: q.validation || "Share your thoughts...",
+      metadata: {
+        strategy: q.strategy,
+        expectedInsight: q.expectedInsight,
+        confidenceLevel: q.confidenceLevel,
+      },
+    }));
+  }
+
+  /**
+   * Auto-generate an initial high-level summary for newly activated modules (Value Proposition, Business Model, Marketing Strategy)
+   */
+  private async autoPopulateModuleIfEmpty(
+    session: Session,
+    module: ModuleType,
+    model: OpenAIModel
+  ) {
+    const bucket = session.contextBuckets.get(module);
+    if (!bucket || (bucket.summary && bucket.summary.length > 0)) return; // already has content
+
+    // Build a quick context from previous modules
+    const idea =
+      session.contextBuckets.get(ModuleType.IDEA_CONCEPT)?.data || {};
+    const target =
+      session.contextBuckets.get(ModuleType.TARGET_MARKET)?.data || {};
+
+    let prompt = "";
+    let placeholderData: any = {};
+
+    switch (module) {
+      case ModuleType.VALUE_PROPOSITION:
+        prompt = `Create a comprehensive value proposition for this business:
+
+Business Idea: ${JSON.stringify(idea)}
+Target Market: ${JSON.stringify(target)}
+
+Provide a detailed value proposition including:
+1. Problem Statement: What problem are you solving?
+2. Solution Overview: How does your solution address this problem?
+3. Unique Value: What makes you different from competitors?
+4. Key Benefits: Top 3-4 benefits for customers
+5. Target Statement: For [target customer] who [need/problem], [product] is [category] that [key benefit]. Unlike [competitors], we [unique differentiator].
+
+Format as a structured response with clear sections.`;
+        break;
+      case ModuleType.BUSINESS_MODEL:
+        prompt = `Design a comprehensive business model for this venture:
+
+Business Idea: ${JSON.stringify(idea)}
+Target Market: ${JSON.stringify(target)}
+
+Provide a detailed business model covering:
+1. Revenue Streams: How will you make money? (pricing, models, recurring vs one-time)
+2. Key Resources: What assets/resources do you need?
+3. Key Partnerships: Who are your critical partners/suppliers?
+4. Cost Structure: What are your main cost categories?
+5. Value Chain: How do you create and deliver value?
+6. Unit Economics: Basic financial metrics (customer acquisition cost, lifetime value estimates)
+7. Scalability: How can this business scale?
+
+Format as a structured business model canvas.`;
+        break;
+      case ModuleType.MARKETING_STRATEGY:
+        prompt = `Develop a comprehensive marketing strategy for this business:
+
+Business Idea: ${JSON.stringify(idea)}
+Target Market: ${JSON.stringify(target)}
+
+Create a detailed marketing strategy including:
+1. Marketing Objectives: What are your key marketing goals?
+2. Target Customer Personas: Detailed profiles of your ideal customers
+3. Marketing Channels: Which channels will you use to reach customers? (digital, traditional, partnerships)
+4. Content Strategy: What type of content will engage your audience?
+5. Customer Acquisition: How will you attract new customers?
+6. Customer Retention: How will you keep customers engaged?
+7. Budget Allocation: How would you distribute a marketing budget?
+8. Success Metrics: How will you measure marketing effectiveness?
+9. Launch Strategy: How will you go to market?
+
+Provide actionable recommendations for each area.`;
+        break;
+      default:
+        return;
+    }
+
+    try {
+      const fullContent = await openAIService.generateResponse(
+        prompt,
+        0.7,
+        model
+      );
+
+      // Create a shorter summary for sidebar display
+      const summaryPrompt = `Summarize the following ${module.toLowerCase().replace("_", " ")} in 2-3 sentences for a sidebar overview:\n\n${fullContent}`;
+      const summary = await openAIService.generateResponse(
+        summaryPrompt,
+        0.5,
+        model
+      );
+
+      // Build comprehensive data object based on the generated content
+      switch (module) {
+        case ModuleType.VALUE_PROPOSITION:
+          placeholderData = {
+            statement: summary.trim(),
+            full_content: fullContent.trim(),
+            problem_statement: "Auto-generated from business analysis",
+            solution_overview: "Detailed in full content",
+            unique_value: "Competitive differentiation identified",
+            key_benefits: ["Benefit 1", "Benefit 2", "Benefit 3"],
+            generated_at: new Date().toISOString(),
+          };
+          break;
+        case ModuleType.BUSINESS_MODEL:
+          placeholderData = {
+            overview: summary.trim(),
+            full_content: fullContent.trim(),
+            revenue_streams: "Detailed in full analysis",
+            key_resources: "Identified in business model",
+            cost_structure: "Analyzed in full content",
+            unit_economics: "Preliminary estimates provided",
+            generated_at: new Date().toISOString(),
+          };
+          break;
+        case ModuleType.MARKETING_STRATEGY:
+          placeholderData = {
+            strategy_overview: summary.trim(),
+            full_content: fullContent.trim(),
+            target_personas: "Detailed customer profiles created",
+            marketing_channels: "Multi-channel approach recommended",
+            acquisition_strategy: "Customer acquisition plan included",
+            content_strategy: "Content recommendations provided",
+            generated_at: new Date().toISOString(),
+          };
+          break;
+      }
+
+      const updated = sessionService.updateContextBucket(
+        session.id,
+        module,
+        placeholderData,
+        summary.trim() // Use the shorter summary for sidebar
+      );
+
+      // Force status to in_progress so sidebar unlocks
+      if (updated) {
+        updated.completionStatus = "in_progress" as any;
+      }
+
+      console.log(`✅ Auto-populated ${module} with comprehensive content`);
+    } catch (err) {
+      console.error("Failed to auto-populate module", module, err);
+    }
+  }
 }
 
 export const chatService = new ChatService();
-

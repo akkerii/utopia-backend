@@ -1,12 +1,21 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.ModuleType = exports.AgentType = exports.Mode = void 0;
+exports.ModuleType = exports.AgentType = exports.OpenAIModel = exports.Mode = void 0;
 // Modes of operation
 var Mode;
 (function (Mode) {
     Mode["ENTREPRENEUR"] = "entrepreneur";
     Mode["CONSULTANT"] = "consultant";
 })(Mode || (exports.Mode = Mode = {}));
+// Available OpenAI models
+var OpenAIModel;
+(function (OpenAIModel) {
+    OpenAIModel["GPT_4O"] = "gpt-4o";
+    OpenAIModel["GPT_4O_MINI"] = "gpt-4o-mini";
+    OpenAIModel["GPT_4_TURBO"] = "gpt-4-turbo";
+    OpenAIModel["GPT_4"] = "gpt-4";
+    OpenAIModel["GPT_3_5_TURBO"] = "gpt-3.5-turbo";
+})(OpenAIModel || (exports.OpenAIModel = OpenAIModel = {}));
 // AI Agent types
 var AgentType;
 (function (AgentType) {

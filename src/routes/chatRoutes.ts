@@ -1,5 +1,6 @@
 import { Router, RequestHandler } from "express";
 import { chatService } from "../services/chatService";
+import { openAIService } from "../services/openAIService";
 import { ChatRequest } from "../types";
 
 const router = Router();
@@ -14,10 +15,42 @@ const handleChat: RequestHandler = async (req, res): Promise<void> => {
       return;
     }
 
+    // Validate model if provided
+    if (chatRequest.model && !openAIService.isValidModel(chatRequest.model)) {
+      res.status(400).json({
+        error: "Invalid model specified",
+        availableModels: openAIService.getAvailableModels(),
+      });
+      return;
+    }
+
     const response = await chatService.processMessage(chatRequest);
     res.json(response);
   } catch (error) {
     console.error("Chat endpoint error:", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+};
+
+// Get available OpenAI models
+const getAvailableModels: RequestHandler = async (_req, res): Promise<void> => {
+  try {
+    const models = openAIService.getAvailableModels();
+    const defaultModel = openAIService.getDefaultModel();
+
+    res.json({
+      models,
+      defaultModel,
+      modelDescriptions: {
+        "gpt-4o": "Most advanced model with vision capabilities",
+        "gpt-4o-mini": "Fast and efficient model, good for most tasks",
+        "gpt-4-turbo": "High-performance model with large context window",
+        "gpt-4": "Reliable model with excellent reasoning capabilities",
+        "gpt-3.5-turbo": "Fast and cost-effective model",
+      },
+    });
+  } catch (error) {
+    console.error("Models endpoint error:", error);
     res.status(500).json({ error: "Internal server error" });
   }
 };
@@ -65,6 +98,7 @@ const healthCheck: RequestHandler = (_req, res): void => {
 
 // Route handlers
 router.post("/chat", handleChat);
+router.get("/models", getAvailableModels);
 router.get("/session/:sessionId", getSession);
 router.post("/session/:sessionId/clear", clearSession);
 router.get("/health", healthCheck);

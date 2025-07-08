@@ -23,6 +23,7 @@ The backend features four specialized AI agents:
 - 📊 **Module Building**: Progressively builds business modules through conversation
 - 💾 **In-Memory Storage**: Fast session management (no database required for MVP)
 - 🎯 **Goal-Oriented**: Guides users through logical business planning progression
+- 🤖 **OpenAI Model Selection**: Users can choose their preferred OpenAI model (GPT-4o, GPT-4o-mini, GPT-4-turbo, etc.)
 
 ## Getting Started
 
@@ -74,7 +75,8 @@ Send a message to the AI advisor
 {
   "message": "I want to start a coffee shop",
   "sessionId": "optional-session-id",
-  "mode": "entrepreneur" // or "consultant"
+  "mode": "entrepreneur", // or "consultant"
+  "model": "gpt-4o-mini" // optional: specify OpenAI model
 }
 ```
 
@@ -92,7 +94,28 @@ Send a message to the AI advisor
     "summary": "Coffee shop business concept",
     "completionStatus": "in_progress"
   }],
-  "suggestedNextModule": "target_market"
+  "suggestedNextModule": "target_market",
+  "currentModel": "gpt-4o-mini"
+}
+```
+
+### GET /api/models
+
+Get available OpenAI models and their descriptions
+
+**Response:**
+
+```json
+{
+  "models": ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-4", "gpt-3.5-turbo"],
+  "defaultModel": "gpt-4o-mini",
+  "modelDescriptions": {
+    "gpt-4o": "Most advanced model with vision capabilities",
+    "gpt-4o-mini": "Fast and efficient model, good for most tasks",
+    "gpt-4-turbo": "High-performance model with large context window",
+    "gpt-4": "Reliable model with excellent reasoning capabilities",
+    "gpt-3.5-turbo": "Fast and cost-effective model"
+  }
 }
 ```
 
@@ -143,10 +166,22 @@ src/
 1. **User sends message** → API receives chat request
 2. **Agent Selection** → System determines best agent based on context
 3. **Context Building** → Relevant business data is included in prompt
-4. **AI Response** → OpenAI generates contextual response
+4. **AI Response** → OpenAI generates contextual response (using selected model)
 5. **Data Extraction** → System extracts business insights from conversation
 6. **Module Update** → Business modules are updated with new information
 7. **Response** → User receives AI message + module updates
+
+## OpenAI Model Selection
+
+Users can choose from multiple OpenAI models:
+
+- **gpt-4o**: Most advanced model with vision capabilities
+- **gpt-4o-mini**: Fast and efficient model, good for most tasks (default)
+- **gpt-4-turbo**: High-performance model with large context window
+- **gpt-4**: Reliable model with excellent reasoning capabilities
+- **gpt-3.5-turbo**: Fast and cost-effective model
+
+Model preferences are remembered per session. See [MODEL_SELECTION.md](MODEL_SELECTION.md) for detailed documentation.
 
 ## Development Notes
 
@@ -168,5 +203,7 @@ src/
 ## License
 
 ISC
+
 # Testing GitHub Actions deployment
+
 # Testing with new GCP_SA_KEY secret

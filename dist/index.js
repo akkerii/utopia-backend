@@ -11,9 +11,27 @@ const sessionService_1 = require("./services/sessionService");
 // Load environment variables
 dotenv_1.default.config();
 const app = (0, express_1.default)();
-const PORT = process.env.PORT || 3000;
+const PORT = parseInt(process.env.PORT || "3000", 10);
+const HOST = process.env.HOST || "0.0.0.0"; // Listen on all network interfaces
+// CORS configuration
+const corsOptions = {
+    origin: [
+        "https://utopia-frontend-218476677732.us-central1.run.app",
+        "http://localhost:3000",
+        "http://localhost:3001",
+        "http://localhost:3003", // Add support for frontend on port 3003
+    ],
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allowedHeaders: [
+        "Content-Type",
+        "Authorization",
+        "ngrok-skip-browser-warning",
+    ],
+    credentials: true,
+    optionsSuccessStatus: 200,
+};
 // Middleware
-app.use((0, cors_1.default)());
+app.use((0, cors_1.default)(corsOptions));
 app.use(express_1.default.json());
 app.use(express_1.default.urlencoded({ extended: true }));
 // Routes
@@ -25,6 +43,7 @@ app.get("/", (_req, res) => {
         version: "1.0.0",
         endpoints: {
             chat: "POST /api/chat",
+            models: "GET /api/models",
             session: "GET /api/session/:sessionId",
             clearSession: "POST /api/session/:sessionId/clear",
             health: "GET /api/health",
@@ -37,9 +56,9 @@ app.use((err, _req, res, _next) => {
     res.status(500).json({ error: "Internal server error" });
 });
 // Start server
-app.listen(PORT, () => {
-    console.log(`🚀 Utopia AI Backend running on port ${PORT}`);
-    console.log(`📍 API available at http://localhost:${PORT}/api`);
+app.listen(PORT, HOST, () => {
+    console.log(`🚀 Utopia AI Backend running on ${HOST}:${PORT}`);
+    console.log(`📍 API available at http://${HOST}:${PORT}/api`);
     // Check for OpenAI API key
     if (!process.env.OPENAI_API_KEY) {
         console.warn("⚠️  Warning: OPENAI_API_KEY not found in environment variables");

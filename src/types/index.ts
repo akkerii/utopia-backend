@@ -4,6 +4,15 @@ export enum Mode {
   CONSULTANT = "consultant",
 }
 
+// Available OpenAI models
+export enum OpenAIModel {
+  GPT_4O = "gpt-4o",
+  GPT_4O_MINI = "gpt-4o-mini",
+  GPT_4_TURBO = "gpt-4-turbo",
+  GPT_4 = "gpt-4",
+  GPT_3_5_TURBO = "gpt-3.5-turbo",
+}
+
 // AI Agent types
 export enum AgentType {
   IDEA = "idea",
@@ -43,6 +52,8 @@ export interface Session {
   conversationHistory: ConversationMessage[];
   createdAt: Date;
   lastActive: Date;
+  // Add preferred model to session
+  preferredModel?: OpenAIModel;
 }
 
 // Message in conversation
@@ -53,13 +64,38 @@ export interface ConversationMessage {
   agent?: AgentType;
   module?: ModuleType;
   timestamp: Date;
+  // Track which model generated this message
+  model?: OpenAIModel;
+  // New fields for structured questions
+  structuredQuestions?: StructuredQuestion[];
+  structuredResponses?: StructuredResponse[];
+}
+
+// New interfaces for structured questions and responses
+export interface StructuredQuestion {
+  id: string;
+  question: string;
+  type: "text" | "textarea" | "select" | "multiselect" | "buttons";
+  options?: string[];
+  required?: boolean;
+  placeholder?: string;
+}
+
+export interface StructuredResponse {
+  questionId: string;
+  question: string;
+  response: string | string[];
 }
 
 // Chat request from client
 export interface ChatRequest {
-  sessionId?: string;
   message: string;
+  sessionId?: string;
   mode?: Mode;
+  // New field for structured responses
+  structuredResponses?: StructuredResponse[];
+  // Add model selection
+  model?: OpenAIModel;
 }
 
 // Chat response to client
@@ -71,6 +107,10 @@ export interface ChatResponse {
   updatedModules?: ModuleUpdate[];
   suggestedNextModule?: ModuleType;
   isModuleTransition?: boolean;
+  // New field for structured questions
+  structuredQuestions?: StructuredQuestion[];
+  // Add current model to response
+  currentModel?: OpenAIModel;
 }
 
 // Module update notification
