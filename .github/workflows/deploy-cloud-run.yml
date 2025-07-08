@@ -56,19 +56,13 @@ jobs:
           # Check if we can access the project
           gcloud config list --format="yaml"
 
-          # Check if required APIs are enabled
-          echo "Checking required APIs..."
-          # First enable essential APIs
-          echo "Enabling required APIs..."
-          gcloud services enable cloudbuild.googleapis.com --quiet || true
-          gcloud services enable run.googleapis.com --quiet || true
-          gcloud services enable artifactregistry.googleapis.com --quiet || true
-          gcloud services enable containerregistry.googleapis.com --quiet || true
-          gcloud services enable cloudresourcemanager.googleapis.com --quiet || true
-
-          # Then try to list them
-          echo "Verifying enabled APIs..."
-          gcloud services list --enabled --filter="name:cloudbuild.googleapis.com OR name:run.googleapis.com OR name:artifactregistry.googleapis.com" --format="table(name,title)"
+          # Note: APIs must be enabled manually by project owner
+          echo "ℹ️ Required APIs (must be enabled by project owner):"
+          echo "- cloudbuild.googleapis.com"
+          echo "- run.googleapis.com"
+          echo "- artifactregistry.googleapis.com"
+          echo "- containerregistry.googleapis.com"
+          echo "- cloudresourcemanager.googleapis.com"
 
       - name: Configure Docker to use gcloud as a credential helper
         run: |
